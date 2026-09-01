@@ -1,0 +1,22 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../apps/server/src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Room {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  type      RoomType
+  maxSeats  Int
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+enum RoomType {
+  MUSIC
+  VIDEO
+}
