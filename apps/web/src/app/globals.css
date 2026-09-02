@@ -1,26 +1,134 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-bg: #0a0a0c;
+  --color-surface: #121215;
+  --color-surface-2: #1a1a1e;
+  --color-surface-3: #222226;
+  --color-border: #29292f;
+  --color-border-strong: #38383f;
+  --color-text: #f2f2f4;
+  --color-text-muted: #93939c;
+  --color-text-faint: #5c5c64;
+  --color-accent: #d9a65a;
+  --color-accent-strong: #e8bd7c;
+  --color-accent-soft: rgba(217, 166, 90, 0.14);
+  --color-accent-soft-strong: rgba(217, 166, 90, 0.26);
+  --color-danger: #f36565;
+  --color-danger-soft: rgba(243, 101, 101, 0.12);
+  --color-success: #4ade80;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+* {
+  scrollbar-color: var(--color-surface-3) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* -----------------------------------------------------------
+   ROOM GRID
+   Named grid areas so mobile source order and desktop
+   placement can differ without duplicating markup.
+------------------------------------------------------------ */
+
+.room-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "header"
+    "player"
+    "addmusic"
+    "queue"
+    "seats"
+    "participants"
+    "chat";
+}
+
+@media (min-width: 1024px) {
+  .room-grid {
+    grid-template-columns: 1fr 380px;
+    grid-template-areas:
+      "header header"
+      "player addmusic"
+      "player queue"
+      "seats  queue"
+      "seats  participants"
+      "chat   chat";
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.area-header { grid-area: header; }
+.area-player { grid-area: player; }
+.area-addmusic { grid-area: addmusic; }
+.area-queue { grid-area: queue; min-height: 0; }
+.area-seats { grid-area: seats; }
+.area-participants { grid-area: participants; }
+.area-chat { grid-area: chat; }
+
+/* -----------------------------------------------------------
+   NOW PLAYING EQUALIZER (subtle looping bars)
+------------------------------------------------------------ */
+
+.eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+
+.eq-bar {
+  width: 2.5px;
+  background: var(--color-accent);
+  border-radius: 2px;
+  animation: eq-bounce 900ms ease-in-out infinite;
+}
+
+.eq-bar:nth-child(1) { animation-delay: 0ms; }
+.eq-bar:nth-child(2) { animation-delay: 180ms; }
+.eq-bar:nth-child(3) { animation-delay: 360ms; }
+
+@keyframes eq-bounce {
+  0%, 100% { height: 3px; }
+  50% { height: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .eq-bar {
+    height: 7px !important;
+  }
 }
