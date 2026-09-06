@@ -116,6 +116,32 @@ export interface ClientToServerEvents {
   }) => void;
 
   "music:ended": () => void;
+
+  "video:queue-add": (payload: {
+    media: MediaItem;
+  }) => void;
+
+  "video:queue-remove": (payload: {
+    index: number;
+  }) => void;
+
+  "video:play": () => void;
+
+  "video:pause": () => void;
+
+  "video:seek": (payload: {
+    position: number;
+  }) => void;
+
+  "video:next": () => void;
+
+  "video:previous": () => void;
+
+  "video:set-mode": (payload: {
+    mode: PlaybackMode;
+  }) => void;
+
+  "video:ended": () => void;
 }
 
 export interface ServerToClientEvents {
@@ -162,6 +188,22 @@ export interface ServerToClientEvents {
   }) => void;
 
   "music:playback-error": (data: {
+    message: string;
+  }) => void;
+
+  "video:queue-updated": (data: {
+    queue: MediaItem[];
+  }) => void;
+
+  "video:queue-error": (data: {
+    message: string;
+  }) => void;
+
+  "video:playback-updated": (data: {
+    playback: MediaPlaybackState;
+  }) => void;
+
+  "video:playback-error": (data: {
     message: string;
   }) => void;
 }
