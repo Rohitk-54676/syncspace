@@ -220,7 +220,7 @@ export default function Home() {
   );
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[var(--color-bg)] px-4 py-8 text-[var(--color-text)] sm:px-6 sm:py-12 lg:py-16">
+    <main className="relative min-h-dvh overflow-hidden bg-[var(--color-bg)] px-4 py-8 text-[var(--color-text)] sm:px-6 sm:py-12 lg:py-16">
       {/* -------------------------------------------------
           AMBIENT BACKGROUND
       ------------------------------------------------- */}

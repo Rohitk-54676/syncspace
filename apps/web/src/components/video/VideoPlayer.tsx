@@ -1,11 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+    ListMusic,
+    Pause,
+    Play,
+    Repeat,
+    Repeat1,
+    Shuffle,
+    SkipBack,
+    SkipForward,
+} from "lucide-react";
 import type {
     MediaItem,
     MediaPlaybackState,
     PlaybackMode,
 } from "@syncspace/shared";
+import { IconButton } from "@/components/ui/IconButton";
 
 interface VideoPlayerProps {
     media: MediaItem | null;
@@ -74,53 +85,39 @@ declare global {
 const PLAYBACK_MODES: {
     value: PlaybackMode;
     label: string;
+    Icon: typeof ListMusic;
 }[] = [
     {
         value: "normal",
         label: "Normal",
+        Icon: ListMusic,
     },
     {
         value: "repeat_one",
         label: "Repeat One",
+        Icon: Repeat1,
     },
     {
         value: "repeat_queue",
         label: "Repeat Queue",
+        Icon: Repeat,
     },
     {
         value: "shuffle",
         label: "Shuffle",
+        Icon: Shuffle,
     },
 ];
 
-/*
- * How often we poll for slow position drift (participants only)
- * and native host-seek detection. This interval NEVER decides
- * play/pause state (that's fully event-driven, see the "apply
- * server playback" effect below).
- */
 const SYNC_INTERVAL_MS = 500;
 const SEEK_THRESHOLD_SECONDS = 1.25;
-
-/*
- * Safety net only. If a participant asks to resume and the server
- * rejects the request (e.g. the room is actually stopped), no
- * "video:playback-updated" answer will ever arrive. Without this,
- * the participant would be stuck in "resyncing" forever. This is
- * NOT used as a synchronization mechanism — resync is answered by
- * a real event the overwhelming majority of the time; this only
- * guards the rejection edge case.
- */
-const RESYNC_FALLBACK_MS = 4000;
 
 type ClientSyncState =
     | "following"
     | "locally_paused"
     | "resyncing";
 
-function extractYouTubeId(
-    mediaId: string,
-): string {
+function extractYouTubeId(mediaId: string): string {
     return mediaId;
 }
 
@@ -129,14 +126,10 @@ function isUsablePlayer(
 ): player is YouTubePlayer {
     return (
         !!player &&
-        typeof player.getCurrentTime ===
-            "function" &&
-        typeof player.seekTo ===
-            "function" &&
-        typeof player.playVideo ===
-            "function" &&
-        typeof player.pauseVideo ===
-            "function"
+        typeof player.getCurrentTime === "function" &&
+        typeof player.seekTo === "function" &&
+        typeof player.playVideo === "function" &&
+        typeof player.pauseVideo === "function"
     );
 }
 
@@ -144,10 +137,7 @@ function getAuthoritativePosition(
     playback: MediaPlaybackState,
 ): number {
     if (!playback.isPlaying) {
-        return Math.max(
-            0,
-            playback.position,
-        );
+        return Math.max(0, playback.position);
     }
 
     return Math.max(
@@ -155,9 +145,7 @@ function getAuthoritativePosition(
         playback.position +
             Math.max(
                 0,
-                (Date.now() -
-                    playback.updatedAt) /
-                    1000,
+                (Date.now() - playback.updatedAt) / 1000,
             ),
     );
 }
@@ -175,24 +163,21 @@ export function VideoPlayer({
     onSetMode,
 }: VideoPlayerProps) {
     const containerRef =
-        useRef<HTMLDivElement | null>(
-            null,
-        );
+        useRef<HTMLDivElement | null>(null);
 
     const playerRef =
-        useRef<YouTubePlayer | null>(
-            null,
-        );
+        useRef<YouTubePlayer | null>(null);
 
+    /*
+     * ALWAYS contains the latest server-authoritative state.
+     *
+     * This is deliberately independent from localPaused.
+     */
     const playbackRef =
-        useRef<MediaPlaybackState | null>(
-            playback,
-        );
+        useRef<MediaPlaybackState | null>(playback);
 
     const mediaRef =
-        useRef<MediaItem | null>(
-            media,
-        );
+        useRef<MediaItem | null>(media);
 
     const isHostRef =
         useRef(isHost);
@@ -210,99 +195,62 @@ export function VideoPlayer({
         useRef(onEnded);
 
     /*
-     * ---------------------------------------------------------
-     * SYNCHRONIZATION STATE MACHINE (participant-only concept)
-     * ---------------------------------------------------------
+     * Participant-only local override.
      *
-     * "following"       -> local player tracks the authoritative
-     *                       room timeline (default state).
-     * "locally_paused"   -> participant paused their own view;
-     *                       the room continues elsewhere.
-     * "resyncing"        -> participant asked to resume; we are
-     *                       waiting for the authoritative playback
-     *                       update that answers this request.
+     * IMPORTANT:
+     * localPaused means ONLY:
      *
-     * The host is always conceptually "following" — the host
-     * drives the timeline, so these paused/resyncing states never
-     * apply to the host branch of the code.
+     * "Keep my YouTube player paused."
+     *
+     * It does NOT mean:
+     *
+     * "Stop receiving/tracking server playback."
      */
-    const clientSyncStateRef =
-        useRef<ClientSyncState>(
-            "following",
-        );
+    const localPausedRef =
+        useRef(false);
 
-    const resyncStartedAtRef =
-        useRef<number | null>(null);
+    const clientSyncStateRef =
+        useRef<ClientSyncState>("following");
 
     /*
-     * ---------------------------------------------------------
-     * WHY THERE IS NO "pendingCommand kind+generation" TRACKING
-     * ANYMORE
-     * ---------------------------------------------------------
+     * Explicitly marks operations initiated by our code.
      *
-     * The previous design tracked "we just issued command X, the
-     * next matching onStateChange event is a confirmation" via a
-     * pendingCommandRef object. That has a structural weakness: if
-     * a confirming event is ever missed for ANY reason (e.g. the
-     * player was already in that state and YouTube doesn't fire a
-     * transition event), the ref gets stuck forever, silently
-     * disabling logic gated behind it.
-     *
-     * We now distinguish "was this event caused by our own action"
-     * from "is this a genuine user action" by comparing the event
-     * against the AUTHORITATIVE TRUTH we already have
-     * (`playbackRef.current.isPlaying`) instead of trying to
-     * predict/track intent:
-     *   - A PLAYING event while `playbackRef.current.isPlaying` is
-     *     already true is just our own action settling — ignore.
-     *   - A PLAYING event while it's false is a genuine user
-     *     action (native host control, or a quirky auto-resume for
-     *     a participant) — act on it.
-     *   - Same logic, inverted, for PAUSED.
-     * This is robust regardless of exact YouTube event timing/
-     * ordering, since it never depends on a flag getting cleared
-     * correctly.
-     *
-     * The ONE place we still need an explicit "this pause was ours"
-     * signal is to know when it's safe to flush a DEFERRED seek
-     * (see `deferredSeekPositionRef` below) — that's the sole
-     * purpose of `awaitingProgrammaticPauseRef`.
+     * This prevents YouTube callbacks generated by our own
+     * pause/play/seek operations from being interpreted as
+     * user commands.
      */
-    const awaitingProgrammaticPauseRef =
+    const programmaticPauseRef =
+        useRef(false);
+
+    const programmaticPlayRef =
+        useRef(false);
+
+    const programmaticSeekRef =
         useRef(false);
 
     /*
-     * A position to seek to ONCE a pending pause is confirmed.
-     *
-     * seekTo() and pauseVideo() must never be issued back-to-back
-     * when the target state is "paused" — YouTube's IFrame API has
-     * a well-known quirk where seeking a player that is
-     * mid-transition into paused can cause it to silently resume
-     * playing once the seek's internal buffering settles. We pause
-     * first and defer any seek until PAUSED is actually confirmed.
+     * Used only for a participant's local pause transition.
      */
-    const deferredSeekPositionRef =
-        useRef<number | null>(null);
+    const localPauseTransitionRef =
+        useRef(false);
 
     /*
-     * Tracks the latest CONFIRMED local player state (only updated
-     * from real onStateChange events, so this reflects what the
-     * player has actually settled into, not what we asked for).
-     */
-    const playerStateRef =
-        useRef<number | null>(null);
-
-    /*
-     * Debounces repeated host-seek reports for the same detected
-     * jump. Reset to null once drift resolves, so a later genuine
-     * seek is always freshly detected.
+     * Last position reported by the host seek detector.
      */
     const lastReportedSeekRef =
         useRef<number | null>(null);
 
     /*
-     * Protects against callbacks from an old YouTube player
-     * instance.
+     * Last authoritative position received from the server.
+     *
+     * This helps prevent the host seek detector from reporting
+     * the same server-applied position back to the server.
+     */
+    const lastAuthoritativePositionRef =
+        useRef<number | null>(null);
+
+    /*
+     * Protect callbacks from destroyed YouTube player instances.
      */
     const playerGenerationRef =
         useRef(0);
@@ -314,57 +262,106 @@ export function VideoPlayer({
         useState(false);
 
     useEffect(() => {
-        playbackRef.current =
-            playback;
+        playbackRef.current = playback;
+
+        if (playback) {
+            lastAuthoritativePositionRef.current =
+                getAuthoritativePosition(playback);
+        }
     }, [playback]);
 
     useEffect(() => {
-        mediaRef.current =
-            media;
+        mediaRef.current = media;
     }, [media]);
 
     useEffect(() => {
-        isHostRef.current =
-            isHost;
+        isHostRef.current = isHost;
     }, [isHost]);
 
     useEffect(() => {
-        onPlayRef.current =
-            onPlay;
+        onPlayRef.current = onPlay;
     }, [onPlay]);
 
     useEffect(() => {
-        onPauseRef.current =
-            onPause;
+        onPauseRef.current = onPause;
     }, [onPause]);
 
     useEffect(() => {
-        onSeekRef.current =
-            onSeek;
+        onSeekRef.current = onSeek;
     }, [onSeek]);
 
     useEffect(() => {
-        onEndedRef.current =
-            onEnded;
+        onEndedRef.current = onEnded;
     }, [onEnded]);
 
     /*
      * ---------------------------------------------------------
-     * APPLY AUTHORITATIVE STATE TO THE LOCAL PLAYER
+     * LOCAL PLAYER COMMAND HELPERS
+     * ---------------------------------------------------------
+     */
+
+    function pauseLocalPlayer(
+        player: YouTubePlayer,
+    ) {
+        if (!isUsablePlayer(player)) {
+            return;
+        }
+
+        programmaticPauseRef.current = true;
+
+        try {
+            player.pauseVideo();
+        } catch {
+            programmaticPauseRef.current = false;
+        }
+    }
+
+    function playLocalPlayer(
+        player: YouTubePlayer,
+    ) {
+        if (!isUsablePlayer(player)) {
+            return;
+        }
+
+        programmaticPlayRef.current = true;
+
+        try {
+            player.playVideo();
+        } catch {
+            programmaticPlayRef.current = false;
+        }
+    }
+
+    function seekLocalPlayer(
+        player: YouTubePlayer,
+        position: number,
+    ) {
+        if (!isUsablePlayer(player)) {
+            return;
+        }
+
+        programmaticSeekRef.current = true;
+
+        try {
+            player.seekTo(
+                Math.max(0, position),
+                true,
+            );
+        } catch {
+            programmaticSeekRef.current = false;
+        }
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * APPLY SERVER STATE
      * ---------------------------------------------------------
      *
-     * Single choke point used by the newly-created player
-     * (onReady), every subsequent server update (the "apply server
-     * playback" effect), and a participant's own local pause.
+     * This function is ONLY responsible for making the local
+     * player follow authoritative server state.
      *
-     * - Target PLAYING: seek (if requested) THEN play. Safe — we
-     *   WANT the player moving afterward, so there is no risk of
-     *   an unwanted silent resume.
-     * - Target PAUSED, already settled paused: safe to seek
-     *   immediately — the player isn't mid-transition.
-     * - Target PAUSED, not yet paused: pause FIRST, and stash the
-     *   seek target in `deferredSeekPositionRef`. The seek is
-     *   performed only once onStateChange confirms PAUSED.
+     * A participant-local pause is handled BEFORE this function
+     * is called by the authoritative playback effect.
      */
     function applyAuthoritativeState(
         player: YouTubePlayer,
@@ -372,67 +369,75 @@ export function VideoPlayer({
         shouldPlay: boolean,
         forceSeek: boolean,
     ) {
-        if (shouldPlay) {
-            try {
-                if (forceSeek) {
-                    player.seekTo(
-                        targetPosition,
-                        true,
-                    );
-                }
+        if (!isUsablePlayer(player)) {
+            return;
+        }
 
-                player.playVideo();
-            } catch {
-                // Ignore; a later update will retry.
+        if (shouldPlay) {
+            if (forceSeek) {
+                seekLocalPlayer(
+                    player,
+                    targetPosition,
+                );
             }
 
+            playLocalPlayer(player);
             return;
+        }
+
+        /*
+         * Server says PAUSED.
+         *
+         * Make sure the local player is paused first.
+         */
+        let playerState: number | null = null;
+
+        try {
+            playerState =
+                player.getPlayerState();
+        } catch {
+            playerState = null;
         }
 
         if (
-            playerStateRef.current ===
+            playerState ===
             window.YT?.PlayerState.PAUSED
         ) {
-            /*
-             * Already settled paused — no transition in flight,
-             * so seeking now is safe.
-             */
             if (forceSeek) {
-                try {
-                    player.seekTo(
-                        targetPosition,
-                        true,
-                    );
-                } catch {
-                    // Ignore; not critical while paused.
-                }
+                seekLocalPlayer(
+                    player,
+                    targetPosition,
+                );
             }
 
             return;
         }
 
-        awaitingProgrammaticPauseRef.current =
-            true;
-
-        deferredSeekPositionRef.current =
-            forceSeek
-                ? targetPosition
-                : null;
+        programmaticPauseRef.current = true;
 
         try {
             player.pauseVideo();
         } catch {
-            awaitingProgrammaticPauseRef.current =
-                false;
+            programmaticPauseRef.current = false;
+            return;
+        }
 
-            deferredSeekPositionRef.current =
-                null;
+        /*
+         * Do not seek in the same tick as pause.
+         *
+         * The PAUSED callback will perform the deferred seek.
+         */
+        if (forceSeek) {
+            localPauseTransitionRef.current = true;
         }
     }
 
     /*
-     * Load the YouTube IFrame API once.
+     * ---------------------------------------------------------
+     * YOUTUBE API
+     * ---------------------------------------------------------
      */
+
     useEffect(() => {
         if (
             typeof window === "undefined"
@@ -461,18 +466,14 @@ export function VideoPlayer({
 
         if (!existingScript) {
             const script =
-                document.createElement(
-                    "script",
-                );
+                document.createElement("script");
 
             script.src =
                 "https://www.youtube.com/iframe_api";
 
             script.async = true;
 
-            document.head.appendChild(
-                script,
-            );
+            document.head.appendChild(script);
         }
 
         return () => {
@@ -483,15 +484,7 @@ export function VideoPlayer({
 
     /*
      * ---------------------------------------------------------
-     * CREATE / DESTROY THE YOUTUBE PLAYER
-     * ---------------------------------------------------------
-     *
-     * Runs when the media changes, OR when host status changes.
-     * Host status is included because `controls` is a player-wide
-     * setting (participants get controls:0 — no native seek bar
-     * or play/pause — hosts get controls:1). A host-transfer mid
-     * session is rare enough that a brief player rebuild is an
-     * acceptable, simple way to apply the correct controls.
+     * CREATE / DESTROY YOUTUBE PLAYER
      * ---------------------------------------------------------
      */
 
@@ -506,12 +499,9 @@ export function VideoPlayer({
         }
 
         const videoId =
-            extractYouTubeId(
-                media.mediaId,
-            );
+            extractYouTubeId(media.mediaId);
 
-        playerGenerationRef.current +=
-            1;
+        playerGenerationRef.current += 1;
 
         const generation =
             playerGenerationRef.current;
@@ -529,13 +519,10 @@ export function VideoPlayer({
             }
         }
 
-        containerRef.current.innerHTML =
-            "";
+        containerRef.current.innerHTML = "";
 
         const playerElement =
-            document.createElement(
-                "div",
-            );
+            document.createElement("div");
 
         playerElement.className =
             "h-full w-full";
@@ -545,29 +532,28 @@ export function VideoPlayer({
         );
 
         /*
-         * A new media item always resets the local synchronization
-         * state — the previous song's local pause has no meaning
-         * for a new song.
+         * New media = new local synchronization context.
          */
         clientSyncStateRef.current =
             "following";
 
-        resyncStartedAtRef.current =
-            null;
+        localPausedRef.current = false;
+        localPauseTransitionRef.current = false;
 
-        awaitingProgrammaticPauseRef.current =
-            false;
-
-        deferredSeekPositionRef.current =
-            null;
+        programmaticPauseRef.current = false;
+        programmaticPlayRef.current = false;
+        programmaticSeekRef.current = false;
 
         setLocalPaused(false);
 
-        playerStateRef.current =
-            null;
+        lastReportedSeekRef.current = null;
 
-        lastReportedSeekRef.current =
-            null;
+        lastAuthoritativePositionRef.current =
+            playbackRef.current
+                ? getAuthoritativePosition(
+                      playbackRef.current,
+                  )
+                : null;
 
         const player =
             new window.YT.Player(
@@ -576,17 +562,7 @@ export function VideoPlayer({
                     videoId,
                     playerVars: {
                         autoplay: 0,
-                        /*
-                         * Only the host gets native YouTube
-                         * controls (including the seek bar).
-                         * Participants get a minimal custom
-                         * play/pause-only control instead (see
-                         * JSX below) so they cannot perform a
-                         * shared seek through the YouTube UI.
-                         */
-                        controls: isHost
-                            ? 1
-                            : 0,
+                        controls: isHost ? 1 : 0,
                         rel: 0,
                         modestbranding: 1,
                         playsinline: 1,
@@ -601,7 +577,7 @@ export function VideoPlayer({
                                 try {
                                     player.destroy();
                                 } catch {
-                                    // Ignore stale player cleanup errors.
+                                    // Ignore stale player cleanup.
                                 }
 
                                 return;
@@ -629,20 +605,22 @@ export function VideoPlayer({
                                 return;
                             }
 
-                            clientSyncStateRef.current =
-                                "following";
-
-                            resyncStartedAtRef.current =
-                                null;
-
-                            setLocalPaused(
-                                false,
-                            );
-
                             const targetPosition =
                                 getAuthoritativePosition(
                                     currentPlayback,
                                 );
+
+                            lastAuthoritativePositionRef.current =
+                                targetPosition;
+
+                            /*
+                             * Participant local pause never survives
+                             * a media change.
+                             */
+                            localPausedRef.current =
+                                false;
+
+                            setLocalPaused(false);
 
                             applyAuthoritativeState(
                                 player,
@@ -671,63 +649,53 @@ export function VideoPlayer({
                             }
 
                             /*
-                             * Only update the CONFIRMED state
-                             * tracker for states we actually
-                             * handle below (PAUSED/PLAYING/ENDED).
-                             * Transient states like BUFFERING or
-                             * UNSTARTED are intentionally NOT
-                             * recorded here, so a brief buffering
-                             * blip mid-playback can't be mistaken
-                             * for "not yet playing" by the drift/
-                             * seek-detection interval below.
-                             */
-
-                            /*
                              * -----------------------------------
                              * PAUSED
                              * -----------------------------------
                              */
                             if (
                                 event.data ===
-                                YT
-                                    .PlayerState
-                                    .PAUSED
+                                YT.PlayerState.PAUSED
                             ) {
-                                playerStateRef.current =
-                                    event.data;
-
+                                /*
+                                 * The YouTube player is now actually
+                                 * paused.
+                                 */
                                 if (
-                                    awaitingProgrammaticPauseRef.current
+                                    programmaticPauseRef.current
                                 ) {
-                                    /*
-                                     * Confirmed: this is our own
-                                     * pause settling, not a user
-                                     * action. The player is now
-                                     * genuinely paused (no
-                                     * transition in flight), so any
-                                     * deferred position correction
-                                     * can safely be applied now.
-                                     */
-                                    awaitingProgrammaticPauseRef.current =
+                                    programmaticPauseRef.current =
                                         false;
 
-                                    const deferredSeek =
-                                        deferredSeekPositionRef.current;
-
-                                    deferredSeekPositionRef.current =
-                                        null;
-
+                                    /*
+                                     * If a server-authoritative seek
+                                     * had to wait for PAUSED, apply it
+                                     * now.
+                                     */
                                     if (
-                                        deferredSeek !==
-                                        null
+                                        localPauseTransitionRef.current
                                     ) {
-                                        try {
-                                            player.seekTo(
-                                                deferredSeek,
-                                                true,
+                                        localPauseTransitionRef.current =
+                                            false;
+
+                                        const currentPlayback =
+                                            playbackRef.current;
+
+                                        if (
+                                            currentPlayback &&
+                                            currentPlayback.mediaId ===
+                                                mediaRef.current?.mediaId &&
+                                            !localPausedRef.current
+                                        ) {
+                                            const targetPosition =
+                                                getAuthoritativePosition(
+                                                    currentPlayback,
+                                                );
+
+                                            seekLocalPlayer(
+                                                player,
+                                                targetPosition,
                                             );
-                                        } catch {
-                                            // Ignore; not critical while paused.
                                         }
                                     }
 
@@ -735,52 +703,80 @@ export function VideoPlayer({
                                 }
 
                                 /*
-                                 * Not something we asked for.
-                                 * Compare against the authoritative
-                                 * truth to decide if this is a
-                                 * genuine user action.
+                                 * A programmatic seek can make YouTube
+                                 * emit PAUSED even though the shared room
+                                 * is still playing.
+                                 *
+                                 * This is especially important during
+                                 * participant RESUME:
+                                 *
+                                 *   seekTo(...)
+                                 *   -> YouTube emits PAUSED
+                                 *   -> old logic interpreted that as
+                                 *      "participant paused again"
+                                 *   -> resume was immediately cancelled.
+                                 *
+                                 * Consume that callback instead of
+                                 * treating it as a user pause.
                                  */
                                 if (
-                                    !isHostRef.current
+                                    programmaticSeekRef.current
                                 ) {
+                                    programmaticSeekRef.current =
+                                        false;
+
+                                    const currentPlayback =
+                                        playbackRef.current;
+
                                     if (
-                                        playbackRef.current
-                                            ?.isPlaying
+                                        !isHostRef.current &&
+                                        !localPausedRef.current &&
+                                        currentPlayback?.isPlaying
                                     ) {
                                         /*
-                                         * Room still says playing,
-                                         * but this participant's
-                                         * view just paused — their
-                                         * own local pause action.
+                                         * The participant is resuming
+                                         * locally. If YouTube left the
+                                         * player paused after seekTo(),
+                                         * explicitly continue playback.
                                          */
-                                        clientSyncStateRef.current =
-                                            "locally_paused";
-
-                                        resyncStartedAtRef.current =
-                                            null;
-
-                                        setLocalPaused(
-                                            true,
-                                        );
+                                        playLocalPlayer(player);
                                     }
 
                                     return;
                                 }
 
                                 /*
-                                 * HOST: room still says playing,
-                                 * but the local player just paused
-                                 * (native control click) — genuine
-                                 * shared pause.
+                                 * Participant intentionally paused
+                                 * locally.
+                                 *
+                                 * The authoritative server is still
+                                 * playing, so this is NOT a shared pause.
                                  */
                                 if (
-                                    playbackRef.current
-                                        ?.isPlaying
+                                    !isHostRef.current &&
+                                    playbackRef.current?.isPlaying
                                 ) {
-                                    setLocalPaused(
-                                        false,
-                                    );
+                                    localPausedRef.current =
+                                        true;
 
+                                    clientSyncStateRef.current =
+                                        "locally_paused";
+
+                                    setLocalPaused(true);
+
+                                    return;
+                                }
+
+                                /*
+                                 * Host native pause.
+                                 *
+                                 * Only report it if the server still
+                                 * says the room is playing.
+                                 */
+                                if (
+                                    isHostRef.current &&
+                                    playbackRef.current?.isPlaying
+                                ) {
                                     onPauseRef.current();
                                 }
 
@@ -794,77 +790,67 @@ export function VideoPlayer({
                              */
                             if (
                                 event.data ===
-                                YT
-                                    .PlayerState
-                                    .PLAYING
+                                YT.PlayerState.PLAYING
                             ) {
-                                playerStateRef.current =
-                                    event.data;
-
+                                /*
+                                 * Ignore the PLAYING callback caused
+                                 * by our own programmatic play.
+                                 */
                                 if (
-                                    !isHostRef.current
+                                    programmaticPlayRef.current
                                 ) {
-                                    if (
-                                        !playbackRef.current
-                                            ?.isPlaying
-                                    ) {
-                                        /*
-                                         * The room does not (yet)
-                                         * consider this participant
-                                         * playing, but the local
-                                         * video started anyway
-                                         * (stale-position resume
-                                         * attempt, or a native-
-                                         * player quirk). Force back
-                                         * to paused and (re)request
-                                         * the authoritative state.
-                                         */
-                                        awaitingProgrammaticPauseRef.current =
-                                            true;
-
-                                        deferredSeekPositionRef.current =
-                                            null;
-
-                                        try {
-                                            player.pauseVideo();
-                                        } catch {
-                                            awaitingProgrammaticPauseRef.current =
-                                                false;
-                                        }
-
-                                        if (
-                                            clientSyncStateRef.current !==
-                                            "resyncing"
-                                        ) {
-                                            clientSyncStateRef.current =
-                                                "resyncing";
-
-                                            resyncStartedAtRef.current =
-                                                Date.now();
-
-                                            setLocalPaused(
-                                                false,
-                                            );
-
-                                            onPlayRef.current();
-                                        }
-                                    }
+                                    programmaticPlayRef.current =
+                                        false;
 
                                     return;
                                 }
 
                                 /*
-                                 * HOST: if the room doesn't yet
-                                 * consider itself playing, this is
-                                 * a genuine Play action (native
-                                 * control, or starting a stopped
-                                 * room). If it's already true, this
-                                 * PLAYING event is just our own
-                                 * action settling — nothing to do.
+                                 * Participant is locally paused.
+                                 *
+                                 * Never allow an unexpected YouTube
+                                 * PLAYING event to escape the local
+                                 * pause override.
                                  */
                                 if (
-                                    !playbackRef.current
-                                        ?.isPlaying
+                                    !isHostRef.current &&
+                                    localPausedRef.current
+                                ) {
+                                    pauseLocalPlayer(
+                                        player,
+                                    );
+
+                                    return;
+                                }
+
+                                /*
+                                 * Participant unexpectedly started
+                                 * while server says paused.
+                                 *
+                                 * Stop it locally. DO NOT emit
+                                 * video:play because only the host
+                                 * can start shared playback.
+                                 */
+                                if (
+                                    !isHostRef.current &&
+                                    !playbackRef.current?.isPlaying
+                                ) {
+                                    pauseLocalPlayer(
+                                        player,
+                                    );
+
+                                    return;
+                                }
+
+                                /*
+                                 * Host native Play.
+                                 *
+                                 * Only report it if the server still
+                                 * says the room is paused.
+                                 */
+                                if (
+                                    isHostRef.current &&
+                                    !playbackRef.current?.isPlaying
                                 ) {
                                     onPlayRef.current();
                                 }
@@ -879,29 +865,35 @@ export function VideoPlayer({
                              */
                             if (
                                 event.data ===
-                                YT
-                                    .PlayerState
-                                    .ENDED
+                                YT.PlayerState.ENDED
                             ) {
-                                playerStateRef.current =
-                                    event.data;
-
                                 clientSyncStateRef.current =
                                     "following";
 
-                                resyncStartedAtRef.current =
-                                    null;
+                                localPausedRef.current =
+                                    false;
 
-                                setLocalPaused(
-                                    false,
-                                );
+                                localPauseTransitionRef.current =
+                                    false;
+
+                                setLocalPaused(false);
 
                                 if (
                                     isHostRef.current
                                 ) {
                                     onEndedRef.current();
                                 }
+
+                                return;
                             }
+
+                            /*
+                             * -----------------------------------
+                             * BUFFERING
+                             * -----------------------------------
+                             *
+                             * Do not modify synchronization state.
+                             */
                         },
                     },
                 },
@@ -912,8 +904,7 @@ export function VideoPlayer({
             generation ===
                 playerGenerationRef.current
         ) {
-            playerRef.current =
-                player;
+            playerRef.current = player;
         }
 
         return () => {
@@ -924,8 +915,7 @@ export function VideoPlayer({
                 return;
             }
 
-            playerGenerationRef.current +=
-                1;
+            playerGenerationRef.current += 1;
 
             const activePlayer =
                 playerRef.current;
@@ -944,19 +934,18 @@ export function VideoPlayer({
 
     /*
      * ---------------------------------------------------------
-     * APPLY SERVER PLAYBACK STATE — event-driven
+     * AUTHORITATIVE PLAYBACK UPDATES
      * ---------------------------------------------------------
      *
-     * Fires the moment a real server broadcast arrives. Depends on
-     * the `playback` OBJECT ITSELF (not destructured primitives) —
-     * `useRoomSocket` only calls setPlayback() in response to an
-     * actual incoming socket message, so a new reference always
-     * means a real event occurred, including a targeted resync
-     * answer that happens to be numerically identical to what the
-     * client already had.
-     * ---------------------------------------------------------
+     * IMPORTANT:
+     *
+     * Even while locallyPaused:
+     *
+     * playbackRef.current continues to receive the latest
+     * authoritative server state.
+     *
+     * The only thing we suppress is automatic local playback.
      */
-
     useEffect(() => {
         if (
             !playback ||
@@ -966,6 +955,15 @@ export function VideoPlayer({
         ) {
             return;
         }
+
+        /*
+         * Always remember the latest authoritative position.
+         */
+        const targetPosition =
+            getAuthoritativePosition(playback);
+
+        lastAuthoritativePositionRef.current =
+            targetPosition;
 
         const player =
             playerRef.current;
@@ -977,96 +975,56 @@ export function VideoPlayer({
         }
 
         /*
-         * A participant who intentionally paused locally stays
-         * paused. Only their own explicit resume action (handled
-         * in the participant control below) can bring them back.
+         * PARTICIPANT LOCAL PAUSE:
+         *
+         * Do NOT apply the server playback state to the local
+         * YouTube player.
+         *
+         * But playbackRef has already been updated above.
+         *
+         * Therefore the participant continues tracking the room
+         * timeline while remaining locally paused.
          */
         if (
             !isHostRef.current &&
-            clientSyncStateRef.current ===
-                "locally_paused"
+            localPausedRef.current
         ) {
             return;
         }
 
-        const wasResyncing =
+        /*
+         * If this was a participant resume, we are no longer
+         * locally paused.
+         */
+        const forceSeek =
             clientSyncStateRef.current ===
             "resyncing";
-
-        const targetPosition =
-            getAuthoritativePosition(
-                playback,
-            );
-
-        let localPosition: number | null =
-            null;
-
-        try {
-            localPosition =
-                player.getCurrentTime();
-        } catch {
-            localPosition = null;
-        }
-
-        const drift =
-            localPosition === null
-                ? Number.POSITIVE_INFINITY
-                : Math.abs(
-                      localPosition -
-                          targetPosition,
-                  );
-
-        /*
-         * A resync answer always seeks (the participant was
-         * sitting at a stale position). Otherwise, only seek
-         * when drift is meaningful.
-         */
-        const shouldSeek =
-            wasResyncing ||
-            drift >
-                SEEK_THRESHOLD_SECONDS;
 
         applyAuthoritativeState(
             player,
             targetPosition,
             playback.isPlaying,
-            shouldSeek,
+            forceSeek,
         );
 
         clientSyncStateRef.current =
             "following";
-
-        resyncStartedAtRef.current =
-            null;
-
-        setLocalPaused(false);
     }, [playback, media?.mediaId]);
 
     /*
      * ---------------------------------------------------------
-     * SLOW DRIFT CORRECTION (participants) + HOST SEEK DETECTION
+     * DRIFT CORRECTION + HOST SEEK DETECTION
      * ---------------------------------------------------------
      *
-     * CRITICAL: drift-correction-by-seeking must NEVER run for the
-     * host. For the host, the local player IS the source of truth
-     * — if it diverges from what the server currently believes,
-     * that means the host just seeked, and it must be REPORTED
-     * upward, never silently overwritten locally. Applying
-     * drift-correction to the host was what undid the host's own
-     * manual seeks (Bug 2), and could also race a fresh Resume's
-     * playVideo() call before it had visually taken effect,
-     * derailing it (Bug 1's intermittent failures).
+     * PARTICIPANTS:
+     * follow the authoritative timeline unless locally paused.
      *
-     * Both branches are gated on `playerStateRef.current === PLAYING`
-     * — a real, confirmed signal (not a timer) — so neither one
-     * runs while the player is mid-transition between paused and
-     * playing. This is what makes seek-detection accurate for
-     * small movements too (previously only large jumps registered)
-     * and prevents a resume-in-progress lag from being misread as
-     * a seek.
-     * ---------------------------------------------------------
+     * HOST:
+     * detect genuine local seeks and report them.
+     *
+     * IMPORTANT:
+     * Host seek detection works both while PLAYING and PAUSED.
      */
-
     useEffect(() => {
         const interval =
             window.setInterval(() => {
@@ -1080,9 +1038,7 @@ export function VideoPlayer({
                     mediaRef.current;
 
                 if (
-                    !isUsablePlayer(
-                        player,
-                    ) ||
+                    !isUsablePlayer(player) ||
                     !currentPlayback ||
                     !currentMedia
                 ) {
@@ -1096,35 +1052,7 @@ export function VideoPlayer({
                     return;
                 }
 
-                if (
-                    !currentPlayback.isPlaying
-                ) {
-                    return;
-                }
-
-                if (
-                    playerStateRef.current !==
-                    window.YT?.PlayerState
-                        .PLAYING
-                ) {
-                    /*
-                     * Not yet confirmed playing (still buffering,
-                     * or mid-transition from a recent play/pause).
-                     * Comparing drift right now would be comparing
-                     * against a moving target during startup lag,
-                     * not a genuine divergence — skip this tick.
-                     */
-                    return;
-                }
-
-                if (
-                    clientSyncStateRef.current !==
-                    "following"
-                ) {
-                    return;
-                }
-
-                let localPosition = 0;
+                let localPosition: number;
 
                 try {
                     localPosition =
@@ -1141,6 +1069,76 @@ export function VideoPlayer({
                     return;
                 }
 
+                /*
+                 * -----------------------------------------------
+                 * PARTICIPANT
+                 * -----------------------------------------------
+                 */
+                if (
+                    !isHostRef.current
+                ) {
+                    /*
+                     * A locally paused participant does NOT move
+                     * their player to follow the server.
+                     *
+                     * Their playbackRef is still current.
+                     */
+                    if (
+                        localPausedRef.current
+                    ) {
+                        return;
+                    }
+
+                    if (
+                        !currentPlayback.isPlaying
+                    ) {
+                        return;
+                    }
+
+                    if (
+                        clientSyncStateRef.current !==
+                        "following"
+                    ) {
+                        return;
+                    }
+
+                    const targetPosition =
+                        getAuthoritativePosition(
+                            currentPlayback,
+                        );
+
+                    const drift =
+                        Math.abs(
+                            localPosition -
+                                targetPosition,
+                        );
+
+                    if (
+                        drift >
+                        SEEK_THRESHOLD_SECONDS
+                    ) {
+                        seekLocalPlayer(
+                            player,
+                            targetPosition,
+                        );
+                    }
+
+                    return;
+                }
+
+                /*
+                 * -----------------------------------------------
+                 * HOST
+                 * -----------------------------------------------
+                 *
+                 * Host is the source of the timeline.
+                 *
+                 * We NEVER correct the host's player toward the
+                 * server.
+                 *
+                 * Instead, meaningful divergence means the host
+                 * manually sought.
+                 */
                 const targetPosition =
                     getAuthoritativePosition(
                         currentPlayback,
@@ -1152,34 +1150,47 @@ export function VideoPlayer({
                             targetPosition,
                     );
 
+                /*
+                 * Ignore our own programmatic seek.
+                 */
                 if (
-                    !isHostRef.current
+                    programmaticSeekRef.current
                 ) {
-                    /*
-                     * PARTICIPANT: gently correct local drift to
-                     * follow the host's timeline.
-                     */
-                    if (
-                        drift >
-                        SEEK_THRESHOLD_SECONDS
-                    ) {
-                        try {
-                            player.seekTo(
-                                targetPosition,
-                                true,
-                            );
-                        } catch {
-                            // Ignore; will retry next tick.
-                        }
-                    }
+                    programmaticSeekRef.current =
+                        false;
+
+                    lastReportedSeekRef.current =
+                        localPosition;
 
                     return;
                 }
 
                 /*
-                 * HOST: never self-correct. A meaningful, sustained
-                 * divergence while genuinely playing means the host
-                 * just performed a native seek — report it upward.
+                 * If the server has already acknowledged this
+                 * position, it is not a new host seek.
+                 */
+                const lastAuthoritative =
+                    lastAuthoritativePositionRef.current;
+
+                if (
+                    lastAuthoritative !== null &&
+                    Math.abs(
+                        localPosition -
+                            lastAuthoritative,
+                    ) <=
+                        SEEK_THRESHOLD_SECONDS
+                ) {
+                    lastReportedSeekRef.current =
+                        null;
+
+                    return;
+                }
+
+                /*
+                 * Meaningful divergence = host seek.
+                 *
+                 * This works whether the room is currently
+                 * playing OR paused.
                  */
                 if (
                     drift >
@@ -1191,7 +1202,8 @@ export function VideoPlayer({
                         Math.abs(
                             localPosition -
                                 lastReportedSeekRef.current,
-                        ) > 1
+                        ) >
+                            0.75
                     ) {
                         lastReportedSeekRef.current =
                             localPosition;
@@ -1200,62 +1212,20 @@ export function VideoPlayer({
                             localPosition,
                         );
                     }
-                } else {
-                    /*
-                     * Drift resolved (e.g. the server's broadcast
-                     * caught up) — reset the debounce so a future
-                     * genuine seek is detected fresh.
-                     */
-                    lastReportedSeekRef.current =
-                        null;
+
+                    return;
                 }
+
+                /*
+                 * Drift is back within tolerance.
+                 * Allow a future seek to be detected.
+                 */
+                lastReportedSeekRef.current =
+                    null;
             }, SYNC_INTERVAL_MS);
 
         return () => {
-            window.clearInterval(
-                interval,
-            );
-        };
-    }, []);
-
-    /*
-     * ---------------------------------------------------------
-     * RESYNC SAFETY FALLBACK
-     * ---------------------------------------------------------
-     *
-     * Only matters if the server rejected the resume request
-     * (e.g. the room was actually stopped) — in that case no
-     * "video:playback-updated" answer will ever arrive, and
-     * without this the participant would be stuck silently
-     * paused-but-marked-resyncing forever.
-     * ---------------------------------------------------------
-     */
-
-    useEffect(() => {
-        const interval =
-            window.setInterval(() => {
-                if (
-                    clientSyncStateRef.current ===
-                        "resyncing" &&
-                    resyncStartedAtRef.current &&
-                    Date.now() -
-                        resyncStartedAtRef.current >
-                        RESYNC_FALLBACK_MS
-                ) {
-                    clientSyncStateRef.current =
-                        "locally_paused";
-
-                    resyncStartedAtRef.current =
-                        null;
-
-                    setLocalPaused(true);
-                }
-            }, 1000);
-
-        return () => {
-            window.clearInterval(
-                interval,
-            );
+            window.clearInterval(interval);
         };
     }, []);
 
@@ -1273,46 +1243,120 @@ export function VideoPlayer({
             return;
         }
 
-        if (localPaused) {
-            /*
-             * Resume: do NOT continue from the stale local
-             * position. Ask the server for the authoritative
-             * state and wait for it — the "apply server
-             * playback" effect will seek + play exactly once,
-             * the moment it arrives.
-             */
-            clientSyncStateRef.current =
-                "resyncing";
+        /*
+         * -------------------------------------------------------
+         * RESUME
+         * -------------------------------------------------------
+         *
+         * Resume is LOCAL.
+         *
+         * We use the latest authoritative playbackRef that has
+         * been continuously maintained even while locally paused.
+         *
+         * We do NOT call onPlay().
+         *
+         * Therefore this never emits shared video:play.
+         */
+        if (localPausedRef.current) {
+            const currentPlayback =
+                playbackRef.current;
 
-            resyncStartedAtRef.current =
-                Date.now();
+            const currentMedia =
+                mediaRef.current;
+
+            if (
+                !currentPlayback ||
+                !currentMedia ||
+                currentPlayback.mediaId !==
+                    currentMedia.mediaId
+            ) {
+                return;
+            }
+
+            /*
+             * If the room is currently paused, the participant
+             * should remain paused rather than independently
+             * starting playback.
+             */
+            if (
+                !currentPlayback.isPlaying
+            ) {
+                const targetPosition =
+                    getAuthoritativePosition(
+                        currentPlayback,
+                    );
+
+                seekLocalPlayer(
+                    player,
+                    targetPosition,
+                );
+
+                localPausedRef.current =
+                    true;
+
+                clientSyncStateRef.current =
+                    "locally_paused";
+
+                setLocalPaused(true);
+
+                return;
+            }
+
+            /*
+             * The room is playing.
+             *
+             * Resync to the latest authoritative position first.
+             */
+            const targetPosition =
+                getAuthoritativePosition(
+                    currentPlayback,
+                );
+
+            localPausedRef.current = false;
+
+            clientSyncStateRef.current =
+                "following";
 
             setLocalPaused(false);
 
-            onPlay();
+            /*
+             * Explicit local resync.
+             *
+             * This is intentionally direct and does NOT emit
+             * shared video:play.
+             */
+            seekLocalPlayer(
+                player,
+                targetPosition,
+            );
+
+            playLocalPlayer(player);
 
             return;
         }
 
-        applyAuthoritativeState(
-            player,
-            0,
-            false,
-            false,
-        );
+        /*
+         * -------------------------------------------------------
+         * LOCAL PAUSE
+         * -------------------------------------------------------
+         *
+         * Pause only this participant's local player.
+         *
+         * NEVER call onPause().
+         */
+        localPausedRef.current = true;
 
         clientSyncStateRef.current =
             "locally_paused";
 
-        resyncStartedAtRef.current =
-            null;
-
         setLocalPaused(true);
+
+        pauseLocalPlayer(player);
     }
 
     if (!media) {
         return (
-            <div className="flex aspect-video items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text-muted)]">
+            <div className="flex aspect-video w-full items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text-muted)]">
                 No video selected
             </div>
         );
@@ -1321,30 +1365,35 @@ export function VideoPlayer({
     const currentMode =
         playback?.mode ?? "normal";
 
+    const CurrentModeIcon =
+        PLAYBACK_MODES.find(
+            (m) => m.value === currentMode,
+        )?.Icon ?? ListMusic;
+
     return (
-        <div className="space-y-3">
-            <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-black">
+        <div className="flex w-full flex-col gap-2 lg:h-full lg:max-w-4xl lg:justify-center">
+            <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-black lg:flex lg:min-h-0 lg:flex-1 lg:items-center lg:justify-center">
                 <div
                     ref={containerRef}
-                    className="aspect-video w-full"
+                    className="aspect-video w-full lg:h-full lg:w-auto lg:max-w-full"
                 />
             </div>
 
             {isHost && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-                    <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={
-                                onPrevious
-                            }
-                            className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm transition hover:bg-[var(--color-surface-hover)]"
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+                    <div className="flex items-center gap-1.5">
+                        <IconButton
+                            variant="outline"
+                            size="sm"
+                            onClick={onPrevious}
+                            aria-label="Previous video"
                         >
-                            Previous
-                        </button>
+                            <SkipBack size={15} />
+                        </IconButton>
 
-                        <button
-                            type="button"
+                        <IconButton
+                            variant="solid"
+                            size="sm"
                             onClick={() => {
                                 if (
                                     playback?.isPlaying
@@ -1354,47 +1403,55 @@ export function VideoPlayer({
                                     onPlay();
                                 }
                             }}
-                            className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium transition hover:bg-[var(--color-surface-hover)]"
-                        >
-                            {playback?.isPlaying
-                                ? "Pause"
-                                : "Play"}
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={
-                                onNext
+                            aria-label={
+                                playback?.isPlaying
+                                    ? "Pause"
+                                    : "Play"
                             }
-                            className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm transition hover:bg-[var(--color-surface-hover)]"
                         >
-                            Next
-                        </button>
+                            {playback?.isPlaying ? (
+                                <Pause
+                                    size={15}
+                                    fill="currentColor"
+                                />
+                            ) : (
+                                <Play
+                                    size={15}
+                                    fill="currentColor"
+                                    className="ml-0.5"
+                                />
+                            )}
+                        </IconButton>
+
+                        <IconButton
+                            variant="outline"
+                            size="sm"
+                            onClick={onNext}
+                            aria-label="Next video"
+                        >
+                            <SkipForward size={15} />
+                        </IconButton>
                     </div>
 
-                    <label className="flex items-center gap-2 text-sm">
-                        <span className="text-[var(--color-text-muted)]">
-                            Mode
-                        </span>
+                    <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+                        <CurrentModeIcon
+                            size={13}
+                            className="text-[var(--color-text-faint)]"
+                        />
 
                         <select
-                            value={
-                                currentMode
-                            }
-                            onChange={(
-                                event,
-                            ) => {
+                            value={currentMode}
+                            onChange={(event) => {
                                 onSetMode(
                                     event.target
                                         .value as PlaybackMode,
                                 );
                             }}
-                            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none"
+                            aria-label="Playback mode"
+                            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1.5 text-xs text-[var(--color-text)] outline-none"
                         >
                             {PLAYBACK_MODES.map(
-                                (
-                                    mode,
-                                ) => (
+                                (mode) => (
                                     <option
                                         key={
                                             mode.value
@@ -1403,9 +1460,7 @@ export function VideoPlayer({
                                             mode.value
                                         }
                                     >
-                                        {
-                                            mode.label
-                                        }
+                                        {mode.label}
                                     </option>
                                 ),
                             )}
@@ -1415,22 +1470,33 @@ export function VideoPlayer({
             )}
 
             {!isHost && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                     <button
                         type="button"
                         onClick={
                             handleParticipantTogglePause
                         }
-                        className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium transition hover:bg-[var(--color-surface-hover)]"
+                        className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium text-[var(--color-text)] transition-colors duration-200 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-3)]"
                     >
+                        {localPaused ? (
+                            <Play
+                                size={13}
+                                fill="currentColor"
+                            />
+                        ) : (
+                            <Pause
+                                size={13}
+                                fill="currentColor"
+                            />
+                        )}
+
                         {localPaused
                             ? "Resume"
-                            : "Pause (just for you)"}
+                            : "Pause for me"}
                     </button>
 
-                    <span className="text-xs text-[var(--color-text-muted)]">
-                        Only the host controls
-                        playback for everyone.
+                    <span className="text-[11px] text-[var(--color-text-faint)]">
+                        Host controls playback for everyone
                     </span>
                 </div>
             )}

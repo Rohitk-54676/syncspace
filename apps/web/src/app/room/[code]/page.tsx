@@ -74,7 +74,7 @@ export default function RoomPage() {
         !participant
     ) {
         return (
-            <main className="flex min-h-screen items-center justify-center bg-[var(--color-bg)] px-4">
+            <main className="flex h-dvh items-center justify-center bg-[var(--color-bg)] px-4">
                 <div className="w-full max-w-md space-y-4">
                     <div className="h-24 animate-pulse rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]" />
 

@@ -13,14 +13,16 @@ function initialFor(name: string) {
   return name.trim().charAt(0).toUpperCase() || "?";
 }
 
+// Content-only panel (no outer card chrome) — rendered inside the
+// People bottom sheet / side drawer from RoomContent.
 export default function ParticipantList({
   participants,
   currentParticipantId,
   maxSeats,
 }: ParticipantListProps) {
   return (
-    <section className="area-participants flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-      <div className="flex items-baseline justify-between">
+    <div className="flex h-full flex-col">
+      <div className="flex items-baseline justify-between px-1">
         <h2 className="text-base font-semibold text-[var(--color-text)]">
           People
         </h2>
@@ -30,7 +32,7 @@ export default function ParticipantList({
         </p>
       </div>
 
-      <ul className="mt-4 space-y-2">
+      <ul className="mt-3 flex-1 space-y-2 overflow-y-auto px-1 pb-1">
         {participants.map((member) => {
           const isMe =
             member.participantId === currentParticipantId;
@@ -52,9 +54,7 @@ export default function ParticipantList({
 
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-1.5 truncate text-sm font-medium text-[var(--color-text)]">
-                  <span className="truncate">
-                    {member.displayName}
-                  </span>
+                  <span className="truncate">{member.displayName}</span>
 
                   {isMe && (
                     <span className="shrink-0 text-xs font-normal text-[var(--color-text-faint)]">
@@ -81,6 +81,6 @@ export default function ParticipantList({
           );
         })}
       </ul>
-    </section>
+    </div>
   );
 }

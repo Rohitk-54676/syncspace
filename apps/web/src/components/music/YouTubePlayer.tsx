@@ -18,7 +18,7 @@ export default function YouTubePlayer({ videoId }: YouTubePlayerProps) {
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-800 bg-black">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-black">
       <YouTube
         videoId={videoId}
         opts={options}

@@ -47,25 +47,25 @@ export default function YouTubeAdd({ onAddToQueue }: YouTubeAddProps) {
   }
 
   return (
-    <section className="area-addmusic rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-      <h2 className="text-base font-semibold text-[var(--color-text)]">
+    <div>
+      <h2 className="text-sm font-semibold text-[var(--color-text)]">
         Add music
       </h2>
 
-      <form onSubmit={handleLookup} className="mt-4 flex gap-2">
+      <form onSubmit={handleLookup} className="mt-3 flex gap-2">
         <input
           type="text"
           value={url}
           onChange={(event) => setUrl(event.target.value)}
           placeholder="Paste a YouTube link"
           aria-label="YouTube URL"
-          className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-sm text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
+          className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
         />
 
         <button
           type="submit"
           disabled={!url.trim() || loading}
-          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-sm font-medium text-[var(--color-text)] transition-colors duration-200 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-3)] disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm font-medium text-[var(--color-text)] transition-colors duration-200 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-3)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loading ? (
             <Loader2 size={15} className="animate-spin" />
@@ -120,6 +120,6 @@ export default function YouTubeAdd({ onAddToQueue }: YouTubeAddProps) {
           </button>
         </motion.div>
       )}
-    </section>
+    </div>
   );
 }

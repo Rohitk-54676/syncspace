@@ -33,22 +33,16 @@ export default function RoomChat({
   }, [messages.length]);
 
   return (
-    <section className="area-chat flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-      <h2 className="text-base font-semibold text-[var(--color-text)]">
-        Chat
-      </h2>
-
+    <section className="room-chat-slot bg-[var(--color-bg)]">
       <div
         ref={scrollRef}
-        className="mt-4 flex h-72 flex-col overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4"
+        className="chat-scroll flex flex-col px-3 py-3 sm:px-5"
       >
         {messages.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-[var(--color-text-faint)]">
-            <MessageCircle size={22} />
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center text-[var(--color-text-faint)]">
+            <MessageCircle size={20} />
 
-            <p className="text-sm">
-              No messages yet. Say hello.
-            </p>
+            <p className="text-sm">No messages yet. Say hello.</p>
           </div>
         ) : (
           <div className="mt-auto space-y-3">
@@ -87,7 +81,7 @@ export default function RoomChat({
                     </div>
 
                     <p
-                      className={`mt-1 max-w-[80%] break-words rounded-xl px-3 py-2 text-sm ${
+                      className={`mt-1 max-w-[85%] break-words rounded-xl px-3 py-2 text-sm ${
                         isMe
                           ? "bg-[var(--color-accent-soft)] text-[var(--color-text)]"
                           : "bg-[var(--color-surface-3)] text-[var(--color-text)]"
@@ -105,25 +99,23 @@ export default function RoomChat({
 
       <form
         onSubmit={onSendMessage}
-        className="mt-4 flex gap-2"
+        className="chat-input-row flex gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 sm:px-5"
       >
         <input
           type="text"
           value={chatInput}
-          onChange={(event) =>
-            onChangeChatInput(event.target.value)
-          }
+          onChange={(event) => onChangeChatInput(event.target.value)}
           maxLength={500}
           placeholder="Type a message..."
           aria-label="Chat message"
-          className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-sm text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
+          className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)]"
         />
 
         <button
           type="submit"
           disabled={!chatInput.trim()}
           aria-label="Send message"
-          className="flex items-center justify-center rounded-xl bg-[var(--color-accent)] px-4 py-3 text-black transition-colors duration-200 hover:bg-[var(--color-accent-strong)] disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent)] px-3.5 py-2.5 text-black transition-colors duration-200 hover:bg-[var(--color-accent-strong)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Send size={16} />
         </button>

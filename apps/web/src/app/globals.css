@@ -19,10 +19,47 @@
   --color-success: #4ade80;
 }
 
+/* ---- Appearance: Light ---- */
+[data-theme="light"] {
+  --color-bg: #f7f6f3;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f0ec;
+  --color-surface-3: #e6e4de;
+  --color-border: #dedcd4;
+  --color-border-strong: #c8c5ba;
+  --color-text: #17171a;
+  --color-text-muted: #57565c;
+  --color-text-faint: #8b8a90;
+  --color-accent-soft: rgba(217, 166, 90, 0.16);
+  --color-accent-soft-strong: rgba(217, 166, 90, 0.3);
+  --color-danger-soft: rgba(243, 101, 101, 0.1);
+}
+
+/* ---- Accent presets (applied on top of either theme) ---- */
+[data-accent="blue"] {
+  --color-accent: #5b9bf5;
+  --color-accent-strong: #7fb2ff;
+  --color-accent-soft: rgba(91, 155, 245, 0.14);
+  --color-accent-soft-strong: rgba(91, 155, 245, 0.26);
+}
+[data-accent="purple"] {
+  --color-accent: #a683f2;
+  --color-accent-strong: #bd9cff;
+  --color-accent-soft: rgba(166, 131, 242, 0.14);
+  --color-accent-soft-strong: rgba(166, 131, 242, 0.26);
+}
+[data-accent="green"] {
+  --color-accent: #5fce8a;
+  --color-accent-strong: #7fe0a4;
+  --color-accent-soft: rgba(95, 206, 138, 0.14);
+  --color-accent-soft-strong: rgba(95, 206, 138, 0.26);
+}
+
 html,
 body {
   background: var(--color-bg);
   color: var(--color-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 * {
@@ -51,45 +88,155 @@ body {
 }
 
 /* -----------------------------------------------------------
-   ROOM GRID
-   Named grid areas so mobile source order and desktop
-   placement can differ without duplicating markup.
+   ROOM SHELL
+   Fixed application viewport. Only .chat-scroll is allowed
+   to scroll. Uses dvh so mobile browser chrome (address bar,
+   keyboard) doesn't cause layout thrash.
 ------------------------------------------------------------ */
 
-.room-grid {
-  display: grid;
-  gap: 1.25rem;
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    "header"
-    "player"
-    "addmusic"
-    "queue"
-    "seats"
-    "participants"
-    "chat";
+.room-shell {
+  height: 100dvh;
+  height: 100svh; /* fallback for browsers without dvh */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg);
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
+.room-header-slot {
+  flex: 0 0 auto;
+}
+
+/*
+ * MOBILE (default): media, seats, and chat stack vertically
+ * inside room-main, exactly as before this wrapper existed.
+ */
+.room-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.room-media-slot {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.room-seats-slot {
+  flex: 0 0 auto;
+}
+
+.room-sidebar {
+  /* Mobile: not a positioned sidebar, just a normal flow wrapper. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.room-chat-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat-input-row {
+  flex: 0 0 auto;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* -----------------------------------------------------------
+   DESKTOP LAYOUT (>=1024px)
+   Media area left, fixed-width sidebar (seats + chat) right.
+   This is the ONLY thing that changes structurally on desktop —
+   mobile rules above are untouched.
+------------------------------------------------------------ */
+
 @media (min-width: 1024px) {
-  .room-grid {
-    grid-template-columns: 1fr 380px;
-    grid-template-areas:
-      "header header"
-      "player addmusic"
-      "player queue"
-      "seats  queue"
-      "seats  participants"
-      "chat   chat";
+  .room-main {
+    flex-direction: row;
+  }
+
+  .room-media-slot {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    overflow: hidden;
+  }
+
+  .room-sidebar {
+    flex: 0 0 400px;
+    min-height: 0;
+    border-left: 1px solid var(--color-border);
+    background: var(--color-bg);
+  }
+
+  .room-seats-slot {
+    flex: 0 0 auto;
+  }
+
+  .room-chat-slot {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 }
 
-.area-header { grid-area: header; }
-.area-player { grid-area: player; }
-.area-addmusic { grid-area: addmusic; }
-.area-queue { grid-area: queue; min-height: 0; }
-.area-seats { grid-area: seats; }
-.area-participants { grid-area: participants; }
-.area-chat { grid-area: chat; }
+/* -----------------------------------------------------------
+   BOTTOM SHEET / DRAWER
+------------------------------------------------------------ */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 40;
+}
+
+.sheet-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  max-height: min(78dvh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
+}
+
+@media (min-width: 1024px) {
+  .sheet-panel {
+    left: auto;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    top: 1.25rem;
+    max-height: none;
+    width: 380px;
+    border-radius: 20px;
+  }
+}
 
 /* -----------------------------------------------------------
    NOW PLAYING EQUALIZER (subtle looping bars)

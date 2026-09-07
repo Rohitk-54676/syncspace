@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion, AnimatePresence } from "framer-motion";
 import { Crown } from "lucide-react";
 import type { ActiveParticipant } from "@syncspace/shared";
 
@@ -11,6 +11,10 @@ interface SeatGridProps {
   onSeatChange: (seat: number) => void;
 }
 
+function initialFor(name: string) {
+  return name.trim().charAt(0).toUpperCase() || "?";
+}
+
 export default function SeatGrid({
   maxSeats,
   participants,
@@ -19,91 +23,78 @@ export default function SeatGrid({
 }: SeatGridProps) {
   const reduceMotion = useReducedMotion();
 
+  // Always exactly two rows: columns = ceil(maxSeats / 2).
+  const columns = Math.max(1, Math.ceil(maxSeats / 2));
+
   return (
-    <section className="area-seats rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-      <div>
-        <h2 className="text-base font-semibold text-[var(--color-text)]">
-          Seats
-        </h2>
+    <section
+      className="room-seats-slot border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 sm:px-5"
+      aria-label="Seats"
+    >
+      <div
+        className="grid gap-x-2 gap-y-2"
+        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+      >
+        <AnimatePresence initial={false}>
+          {Array.from({ length: maxSeats }, (_, index) => {
+            const seat = index + 1;
 
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Pick an open seat to join in.
-        </p>
-      </div>
+            const occupant = participants.find(
+              (member) => member.seat === seat,
+            );
 
-      <div className="mt-5 grid grid-cols-3 gap-2.5 sm:grid-cols-4">
-        {Array.from({ length: maxSeats }, (_, index) => {
-          const seat = index + 1;
+            const isMe =
+              occupant?.participantId === currentParticipantId;
 
-          const occupant = participants.find(
-            (member) => member.seat === seat,
-          );
+            const isTaken = Boolean(occupant) && !isMe;
 
-          const isMe =
-            occupant?.participantId === currentParticipantId;
-
-          const isTaken = Boolean(occupant) && !isMe;
-
-          return (
-            <motion.button
-              key={seat}
-              type="button"
-              disabled={isTaken}
-              onClick={() => onSeatChange(seat)}
-              whileHover={
-                !isTaken && !reduceMotion
-                  ? { y: -2 }
-                  : undefined
-              }
-              whileTap={
-                !isTaken && !reduceMotion
-                  ? { scale: 0.96 }
-                  : undefined
-              }
-              transition={{ duration: 0.15 }}
-              aria-pressed={isMe}
-              aria-label={
-                occupant
-                  ? isMe
-                    ? `Seat ${seat}, your seat`
-                    : `Seat ${seat}, taken by ${occupant.displayName}`
-                  : `Seat ${seat}, available`
-              }
-              className={`relative flex min-h-[76px] flex-col items-center justify-center gap-1 rounded-xl border px-2 py-3 text-center transition-colors duration-200 ${
-                isMe
-                  ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
-                  : isTaken
-                    ? "cursor-not-allowed border-[var(--color-border)] bg-[var(--color-surface-2)] opacity-70"
-                    : "border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-3)]"
-              }`}
-            >
-              {occupant?.isHost && (
-                <Crown
-                  size={12}
-                  className="absolute right-2 top-2 text-[var(--color-accent)]"
-                />
-              )}
-
-              <span
-                className={`text-[11px] font-medium ${
-                  isMe
-                    ? "text-[var(--color-accent-strong)]"
-                    : "text-[var(--color-text-faint)]"
-                }`}
+            return (
+              <motion.button
+                key={seat}
+                type="button"
+                disabled={isTaken}
+                onClick={() => onSeatChange(seat)}
+                layout={!reduceMotion}
+                initial={reduceMotion ? false : { opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: 1 }}
+                whileTap={!isTaken && !reduceMotion ? { scale: 0.93 } : undefined}
+                transition={{ duration: 0.18 }}
+                aria-pressed={isMe}
+                aria-label={
+                  occupant
+                    ? isMe
+                      ? `Seat ${seat}, your seat`
+                      : `Seat ${seat}, taken by ${occupant.displayName}`
+                    : `Seat ${seat}, available`
+                }
+                className="flex flex-col items-center gap-1"
               >
-                Seat {seat}
-              </span>
+                <span
+                  className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors duration-200 sm:h-11 sm:w-11 ${
+                    isMe
+                      ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent-strong)]"
+                      : occupant
+                        ? "cursor-not-allowed border-[var(--color-border)] bg-[var(--color-surface-3)] text-[var(--color-text-muted)]"
+                        : "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                  }`}
+                >
+                  {occupant ? initialFor(occupant.displayName) : ""}
 
-              <span className="w-full truncate text-sm font-medium text-[var(--color-text)]">
-                {occupant
-                  ? isMe
-                    ? "You"
-                    : occupant.displayName
-                  : "Open"}
-              </span>
-            </motion.button>
-          );
-        })}
+                  {occupant?.isHost && (
+                    <Crown
+                      size={10}
+                      className="absolute -right-0.5 -top-0.5 rounded-full bg-[var(--color-surface)] p-[1px] text-[var(--color-accent)]"
+                    />
+                  )}
+                </span>
+
+                <span className="max-w-[52px] truncate text-[10px] text-[var(--color-text-faint)]">
+                  {occupant ? (isMe ? "You" : occupant.displayName) : "Open"}
+                </span>
+              </motion.button>
+            );
+          })}
+        </AnimatePresence>
       </div>
     </section>
   );

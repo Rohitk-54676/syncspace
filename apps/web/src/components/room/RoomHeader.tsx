@@ -19,6 +19,7 @@ interface RoomHeaderProps {
   participantCount: number;
   isHost: boolean;
   onLeave: () => void;
+  onOpenPeople: () => void;
 }
 
 export default function RoomHeader({
@@ -28,6 +29,7 @@ export default function RoomHeader({
   participantCount,
   isHost,
   onLeave,
+  onOpenPeople,
 }: RoomHeaderProps) {
   const [copied, setCopied] = useState(false);
 
@@ -41,8 +43,7 @@ export default function RoomHeader({
       1600,
     );
 
-    return () =>
-      window.clearTimeout(timeout);
+    return () => window.clearTimeout(timeout);
   }, [copied]);
 
   async function handleCopy() {
@@ -54,135 +55,84 @@ export default function RoomHeader({
     }
   }
 
-  const TypeIcon =
-    type === "music" ? Music2 : Video;
+  const TypeIcon = type === "music" ? Music2 : Video;
 
   return (
     <motion.header
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.35,
-        ease: "easeOut",
-      }}
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-7"
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 sm:px-5 sm:py-3"
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
+      <div className="flex min-w-0 items-center gap-2">
+        <TypeIcon
+          size={16}
+          className="shrink-0 text-[var(--color-accent)]"
+        />
 
-            <p className="text-sm font-medium text-[var(--color-text-muted)]">
-              SyncSpace · Private Room
-            </p>
-          </div>
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label="Copy room code"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-sm font-semibold tracking-[0.12em] text-[var(--color-text)] transition-colors duration-200 hover:border-[var(--color-border-strong)]"
+        >
+          {code}
 
-          <div className="mt-2 flex items-center gap-3">
-            <h1
-              className="font-[var(--font-display)] text-4xl font-semibold tracking-[0.08em] text-[var(--color-text)] sm:text-5xl"
-              aria-label={`Room code ${code}`}
-            >
-              {code}
-            </h1>
-
-            <button
-              type="button"
-              onClick={handleCopy}
-              aria-label="Copy room code"
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors duration-200 hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
-            >
-              <AnimatePresence
-                mode="wait"
-                initial={false}
+          <AnimatePresence mode="wait" initial={false}>
+            {copied ? (
+              <motion.span
+                key="check"
+                initial={{ opacity: 0, scale: 0.7 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.7 }}
+                transition={{ duration: 0.15 }}
+                className="text-[var(--color-success)]"
               >
-                {copied ? (
-                  <motion.span
-                    key="check"
-                    initial={{
-                      opacity: 0,
-                      scale: 0.7,
-                    }}
-                    animate={{
-                      opacity: 1,
-                      scale: 1,
-                    }}
-                    exit={{
-                      opacity: 0,
-                      scale: 0.7,
-                    }}
-                    transition={{
-                      duration: 0.15,
-                    }}
-                    className="text-[var(--color-success)]"
-                  >
-                    <Check size={16} />
-                  </motion.span>
-                ) : (
-                  <motion.span
-                    key="copy"
-                    initial={{
-                      opacity: 0,
-                      scale: 0.7,
-                    }}
-                    animate={{
-                      opacity: 1,
-                      scale: 1,
-                    }}
-                    exit={{
-                      opacity: 0,
-                      scale: 0.7,
-                    }}
-                    transition={{
-                      duration: 0.15,
-                    }}
-                  >
-                    <Copy size={16} />
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </button>
-          </div>
-        </div>
+                <Check size={13} />
+              </motion.span>
+            ) : (
+              <motion.span
+                key="copy"
+                initial={{ opacity: 0, scale: 0.7 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.7 }}
+                transition={{ duration: 0.15 }}
+                className="text-[var(--color-text-faint)]"
+              >
+                <Copy size={13} />
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </button>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {isHost && (
-            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--color-accent-soft-strong)] bg-[var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--color-accent-strong)]">
-              <Crown size={13} />
-              Host
-            </span>
-          )}
-
-          <button
-            type="button"
-            onClick={onLeave}
-            className="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] transition-colors duration-200 hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
-          >
-            <LogOut size={13} />
-            Leave Room
-          </button>
-        </div>
+        {isHost && (
+          <span className="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--color-accent-soft-strong)] bg-[var(--color-accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--color-accent-strong)] sm:flex">
+            <Crown size={11} />
+            Host
+          </span>
+        )}
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-[var(--color-border)] pt-5 text-sm text-[var(--color-text-muted)]">
-        <span className="flex items-center gap-2">
-          <TypeIcon
-            size={16}
-            className="text-[var(--color-text-faint)]"
-          />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onOpenPeople}
+          aria-label={`People, ${participantCount} of ${maxSeats}`}
+          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text-muted)] transition-colors duration-200 hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
+        >
+          <Users size={14} />
+          {participantCount}/{maxSeats}
+        </button>
 
-          <span className="capitalize">
-            {type} room
-          </span>
-        </span>
-
-        <span className="flex items-center gap-2">
-          <Users
-            size={16}
-            className="text-[var(--color-text-faint)]"
-          />
-
-          {participantCount} / {maxSeats} in the room
-        </span>
+        <button
+          type="button"
+          onClick={onLeave}
+          aria-label="Leave room"
+          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text-muted)] transition-colors duration-200 hover:border-[var(--color-danger)]/40 hover:text-[var(--color-danger)]"
+        >
+          <LogOut size={14} />
+          <span className="hidden sm:inline">Leave</span>
+        </button>
       </div>
     </motion.header>
   );
